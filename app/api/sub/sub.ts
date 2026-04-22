@@ -1,59 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// --- 关键修改：删除之前的 'edge' 配置，让它使用 Vercel 最稳定的标准 Serverless 环境 ---
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const source = searchParams.get("source");
+
+  if (!source) {
+    return new NextResponse("Error: Missing source parameter", { status: 400 });
+  }
+
+  const urls = source.split("\n").map(url => url.trim()).filter(url => url.startsWith('http'));
+
+  if (urls.length === 0) {
+    return new NextResponse("Error: No valid URLs provided", { status: 400 });
+  }
+
   try {
-    const { searchParams } = new URL(req.url);
-    const source = searchParams.get("source");
-
-    if (!source) {
-      return new NextResponse("错误：未提供订阅链接 (source 参数缺失)", { status: 400 });
-    }
-
-    // 处理多个链接
-    const urls = source.split("\n").map(url => url.trim()).filter(url => url.startsWith('http'));
-
-    if (urls.length === 0) {
-      return new NextResponse("错误：提供的链接格式不正确，必须以 http(s) 开头", { status: 400 });
-    }
-
-    // 逐个抓取内容
     let combinedContent = "";
+    
+    // 使用最基础、兼容性最强的 fetch 循环
     for (const url of urls) {
       try {
-        const response = await fetch(url, {
-          headers: { "User-Agent": "ClashConverter" },
-          // 设置 10 秒超时
-          signal: AbortSignal.timeout(10000) 
+        const res = await fetch(url, {
+          headers: { 
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" 
+          },
+          // 告诉 Vercel 不要缓存，每次都去抓新的
+          cache: 'no-store'
         });
 
-        if (response.ok) {
-          const text = await response.text();
+        if (res.ok) {
+          const text = await res.text();
           combinedContent += text + "\n";
         }
-      } catch (err) {
-        console.error(`无法抓取链接: ${url}`, err);
-        // 单个链接失败不中断，继续下一个
+      } catch (e) {
+        console.error("抓取单个链接失败:", url, e);
       }
     }
 
     if (!combinedContent) {
-      return new NextResponse("错误：无法从提供的链接中获取任何内容，请检查链接是否有效", { status: 502 });
+      return new NextResponse("Error: Could not fetch content from any provided URLs", { status: 502 });
     }
 
-    // 返回合并后的内容
     return new NextResponse(combinedContent, {
       status: 200,
       headers: {
         "Content-Type": "text/plain;charset=utf-8",
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
       },
     });
-
   } catch (error: any) {
-    console.error("服务器内部错误:", error);
-    return new NextResponse(`服务器内部错误: ${error.message}`, { status: 500 });
+    return new NextResponse("Internal Server Error: " + error.message, { status: 500 });
   }
 }
